@@ -1,0 +1,9 @@
+Package: backend-api
+Version: 1.0.0
+Section: base
+Priority: optional
+Architecture: amd64
+Depends: systemd
+Maintainer: DevOps Team <devops@company.com>
+Description: Backend API Service
+ Simple Go backend API with PostgreSQL connection

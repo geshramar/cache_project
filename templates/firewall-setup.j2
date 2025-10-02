@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PG_PORT={{ pg_port }}
+BACKEND_PORT={{ backend_port }}
+REDIS_PORT={{ redis_port }}
+PROXY_PORT={{ proxy_port }}
+
+ROLE="$1"
+PG_IP="$2"
+BACKEND_IP="$3"
+REDIS_IP="$4"
+PROXY_IP="$5"
+
+echo "Firewall configuration with:"
+echo "Role: $ROLE"
+echo "PostgreSQL IP: $PG_IP"
+echo "Backend IP: $BACKEND_IP"
+echo "Redis IP: $REDIS_IP"
+echo "Proxy IP: $PROXY_IP"
+
+# UFW
+setup_ufw() {
+    local role=$1
+
+    echo "Setting up UFW for $role..."
+
+    # reset UFW
+    ufw --force reset
+    ufw disable
+
+    # base
+    ufw default deny incoming
+    ufw default allow outgoing
+
+    # SSH
+    ufw allow ssh
+
+    # ping
+    ufw allow 53  # DNS для разрешения имен
+
+    case "$role" in
+      pg)
+        echo "Configuring PostgreSQL firewall rules..."
+        echo "Allowing PostgreSQL port $PG_PORT from $BACKEND_IP"
+        ufw allow from $BACKEND_IP to any port $PG_PORT
+        ;;
+      backend)
+        echo "Configuring Backend firewall rules..."
+        echo "Allowing Backend port $BACKEND_PORT from $PROXY_IP"
+        ufw allow from $PROXY_IP to any port $BACKEND_PORT
+        ;;
+      redis)
+        echo "Configuring Redis firewall rules..."
+        echo "Allowing Redis port $REDIS_PORT from $PROXY_IP"
+        ufw allow from $PROXY_IP to any port $REDIS_PORT
+        ;;
+    esac
+
+    # start UFW
+    echo "y" | ufw enable
+    echo "UFW status:"
+    ufw status verbose
+}
+
+# Firewalld
+setup_firewalld() {
+    local role=$1
+
+    echo "Setting up Firewalld for $role..."
+
+    # start firewalld
+    systemctl enable firewalld
+    systemctl start firewalld
+
+    # reset
+    firewall-cmd --complete-reload
+
+    # base
+    firewall-cmd --permanent --add-service=ssh
+    # ICMP
+    firewall-cmd --permanent --add-icmp-block-inversion
+
+    # proxy
+    if [[ "$role" == "proxy" ]]; then
+        echo "Configuring Proxy firewall rules..."
+        firewall-cmd --permanent --add-port=$PROXY_PORT/tcp
+
+        firewall-cmd --permanent --add-rich-rule="rule family=ipv4 destination address=$BACKEND_IP port port=$BACKEND_PORT protocol=tcp accept"
+        firewall-cmd --permanent --add-rich-rule="rule family=ipv4 destination address=$REDIS_IP port port=$REDIS_PORT protocol=tcp accept"
+    fi
+
+    # confirm
+    firewall-cmd --reload
+    echo "Firewalld rules for $role:"
+    firewall-cmd --list-all
+}
+
+echo "Starting firewall setup for role: $ROLE"
+
+case "$ROLE" in
+  pg|backend|redis)
+    if ! command -v ufw &> /dev/null; then
+        echo "UFW is not installed. Installing..."
+        apt update
+        apt install ufw -y
+    fi
+    setup_ufw "$ROLE"
+    ;;
+  proxy)
+    if ! command -v firewall-cmd &> /dev/null; then
+        echo "Firewalld is not installed. Installing..."
+        apt update
+        apt install firewalld -y
+    fi
+    setup_firewalld "$ROLE"
+    ;;
+  *)
+    echo "ERROR: Unknown role: $ROLE"
+    exit 1
+    ;;
+esac
+
+echo "Firewall configuration completed for role: $ROLE"

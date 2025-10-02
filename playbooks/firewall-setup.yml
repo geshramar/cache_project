@@ -1,0 +1,44 @@
+---
+- name: Configure firewall rules for all servers
+  hosts: all_servers
+  become: yes
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/all.yml"
+
+  tasks:
+    - name: Gather facts to get IP addresses
+      setup:
+        gather_subset: min
+      tags: [setup]
+
+    - name: Create firewall setup script with dynamic IPs
+      template:
+        src: "{{ playbook_dir }}/templates/firewall-setup.j2"
+        dest: /root/firewall-setup.sh
+        mode: 0755
+      tags: [setup]
+
+- name: Apply firewall configuration
+  hosts: all_servers
+  become: yes
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/all.yml"
+  serial: 1
+  tasks:
+    - name: Apply firewall rules with dynamic IP resolution
+      command: |
+        /root/firewall-setup.sh \
+        "{{ host_firewall_role }}" \
+        "{{ hostvars[groups['postgresql'][0]]['ansible_host'] }}" \
+        "{{ hostvars[groups['backendapi'][0]]['ansible_host'] }}" \
+        "{{ hostvars[groups['redis'][0]]['ansible_host'] }}" \
+        "{{ hostvars[groups['proxy'][0]]['ansible_host'] }}"
+      args:
+        warn: false
+      register: firewall_result
+      tags: [apply]
+
+    - name: Show firewall setup result
+      debug:
+        var: firewall_result.stdout
+      tags: [apply]
